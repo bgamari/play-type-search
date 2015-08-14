@@ -38,11 +38,6 @@ initCabalDynFlags verbosity dflags0 = runMaybeT $ do
     let warnNoCabal _err = lift (warn verbosity "Couldn't find cabal file") >> mzero
     pdfile <- either warnNoCabal pure =<< lift (findPackageDesc ".")
     gpkg_descr <- lift $ PD.readPackageDescription verbosity pdfile
-
-    --let pkgDbs = reverse $ map Just [Compiler.GlobalPackageDB, Compiler.UserPackageDB]
-    --let cflags = (Setup.defaultConfigFlags defaultProgramConfiguration) {Setup.configPackageDBs=pkgDbs}
-    --print cflags
-    --lbi <- Configure.configure (gpkg_descr, PD.emptyHookedBuildInfo) cflags
     lbi <- lift $ Configure.getPersistBuildConfig Setup.defaultDistPref
 
     let programsConfig = defaultProgramConfiguration
