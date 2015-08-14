@@ -60,7 +60,9 @@ runMatch args = GHC.defaultErrorHandler defaultFatalMessager defaultFlushOut $ d
     let printSDoc :: SDoc -> GHC.Ghc ()
         printSDoc = liftIO . putStrLn . showSDoc dflags
 
-    GHC.setTargets (map (\f -> GHC.Target (GHC.TargetFile f Nothing) True Nothing) $ sourceFiles args)
+    targets <- mapM (\s -> GHC.guessTarget s Nothing) (sourceFiles args)
+    GHC.setTargets targets
+
     summaries <- GHC.depanal [] True
     let graph = flattenSCCs $ GHC.topSortModuleGraph True summaries Nothing
     let processModule :: GHC.ModSummary -> GHC.Ghc GHC.TypecheckedModule
