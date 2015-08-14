@@ -10,10 +10,13 @@ module Cabal (
     , Verbosity
     ) where
 
-import Control.Monad (guard, msum)
+import Control.Monad (guard, msum, mzero)
+import Control.Monad.Trans.Maybe (MaybeT, runMaybeT)
+import Control.Monad.Trans.Class
+
 import Control.Applicative ((<|>))
 import Distribution.Verbosity
-import Distribution.Simple.Utils (defaultPackageDesc, warn, debug)
+import Distribution.Simple.Utils (defaultPackageDesc, warn, debug, findPackageDesc)
 import Distribution.Simple.Program (defaultProgramConfiguration)
 import qualified Distribution.Simple.Setup as Setup
 import Distribution.PackageDescription as PD
@@ -27,21 +30,25 @@ import qualified Distribution.Simple.Program.GHC as CGHC
 import DynFlags (DynFlags, parseDynamicFlagsCmdLine)
 import qualified SrcLoc
 
+data CabalDetails = CabalDetails { cdLocalBuildInfo :: LocalBuildInfo
+                                 }
+
 initCabalDynFlags :: Verbosity -> DynFlags -> IO (Maybe DynFlags)
-initCabalDynFlags verbosity dflags0 = do
-    pdfile <- defaultPackageDesc verbosity
-    gpkg_descr  <- PD.readPackageDescription verbosity pdfile
+initCabalDynFlags verbosity dflags0 = runMaybeT $ do
+    let warnNoCabal _err = lift (warn verbosity "Couldn't find cabal file") >> mzero
+    pdfile <- either warnNoCabal pure =<< lift (findPackageDesc ".")
+    gpkg_descr <- lift $ PD.readPackageDescription verbosity pdfile
 
     --let pkgDbs = reverse $ map Just [Compiler.GlobalPackageDB, Compiler.UserPackageDB]
     --let cflags = (Setup.defaultConfigFlags defaultProgramConfiguration) {Setup.configPackageDBs=pkgDbs}
     --print cflags
     --lbi <- Configure.configure (gpkg_descr, PD.emptyHookedBuildInfo) cflags
-    lbi <- Configure.getPersistBuildConfig Setup.defaultDistPref
+    lbi <- lift $ Configure.getPersistBuildConfig Setup.defaultDistPref
 
     let programsConfig = defaultProgramConfiguration
-    (comp, compPlatform, programsConfig') <- Configure.configCompilerEx
-        (Just Compiler.GHC) Nothing Nothing
-        (withPrograms lbi) (lessVerbose verbosity)
+    (comp, compPlatform, programsConfig') <- lift $
+        Configure.configCompilerEx (Just Compiler.GHC) Nothing Nothing
+                                   (withPrograms lbi) (lessVerbose verbosity)
 
     -- TODO: is any of this correct?
     let pkg_descr = case finalizePackageDescription
@@ -65,10 +72,10 @@ initCabalDynFlags verbosity dflags0 = do
             return (bi, getComponentLocalBuildInfo lbi (LBI.CExeName $ PD.exeName exec))
 
     case comp of
-      Just (bi, clbi) -> Just <$> initCabalDynFlags' verbosity lbi bi clbi dflags0
+      Just (bi, clbi) -> lift $ initCabalDynFlags' verbosity lbi bi clbi dflags0
       Nothing         -> do
-          warn verbosity $ "Found no buildable components in "++pdfile
-          return Nothing
+          lift $ warn verbosity $ "Found no buildable components in "++pdfile
+          mzero
 
 initCabalDynFlags' :: Verbosity -> LocalBuildInfo
                    -> BuildInfo -> ComponentLocalBuildInfo

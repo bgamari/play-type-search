@@ -2,6 +2,7 @@
 
 import qualified Distribution.Verbosity as Verbosity
 import Data.Monoid
+import Data.Maybe (fromMaybe)
 import Data.Generics
 import Data.Foldable
 import Control.Monad (mzero)
@@ -55,7 +56,7 @@ runMatch :: Opts -> GHC.Ghc ()
 runMatch args = GHC.defaultErrorHandler defaultFatalMessager defaultFlushOut $ do
     -- Note that this initial {get,set}SessionDynFlags is not idempotent
     dflags <- GHC.getSessionDynFlags
-    Just dflags' <- liftIO $ initCabalDynFlags (verbose args) dflags
+    dflags' <- fromMaybe dflags <$> liftIO (initCabalDynFlags (verbose args) dflags)
     GHC.setSessionDynFlags dflags' { hscTarget = HscNothing }
     let printSDoc :: SDoc -> GHC.Ghc ()
         printSDoc = liftIO . putStrLn . showSDoc dflags
