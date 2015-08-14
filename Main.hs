@@ -1,5 +1,6 @@
 {-# LANGUAGE RankNTypes #-}
 
+import qualified Distribution.Verbosity as Verbosity
 import Data.Monoid
 import Data.Generics
 import Data.Foldable
@@ -11,6 +12,8 @@ import Digraph (flattenSCCs) -- this should be expected from GHC
 import Options.Applicative hiding ((<>))
 
 import Outputable hiding ((<>))
+
+import Cabal
 
 newtype Matcher = Matcher
     { runMatcher :: forall r. Monoid r => (GHC.LHsBind GHC.Id -> r) -> GHC.LHsBinds GHC.Id -> GHC.Ghc r }
@@ -47,7 +50,8 @@ runMatch :: Opts -> GHC.Ghc ()
 runMatch args = GHC.defaultErrorHandler defaultFatalMessager defaultFlushOut $ do
     -- Note that this initial {get,set}SessionDynFlags is not idempotent
     dflags <- GHC.getSessionDynFlags
-    GHC.setSessionDynFlags dflags { hscTarget = HscNothing }
+    Just dflags' <- liftIO $ initCabalDynFlags Verbosity.normal dflags
+    GHC.setSessionDynFlags dflags' { hscTarget = HscNothing }
     let printSDoc :: SDoc -> GHC.Ghc ()
         printSDoc = liftIO . putStrLn . showSDoc dflags
 

@@ -21,5 +21,6 @@ executable type-search
                        ghc ==7.10.2,
                        transformers,
                        syb,
-                       optparse-applicative
+                       optparse-applicative,
+                       Cabal
   default-language:    Haskell2010
