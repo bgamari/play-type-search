@@ -22,5 +22,6 @@ executable type-search
                        transformers,
                        syb,
                        optparse-applicative,
-                       Cabal
+                       Cabal,
+                       cabal-ghc-dynflags
   default-language:    Haskell2010

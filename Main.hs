@@ -18,7 +18,7 @@ import Options.Applicative hiding ((<>))
 
 import qualified Distribution.Verbosity as Verbosity
 import qualified Distribution.Simple.Utils as Utils
-import Cabal
+import GHC.Cabal
 
 newtype Matcher = Matcher
     { runMatcher :: forall r. Monoid r => (GHC.LHsBind GHC.Id -> r) -> GHC.LHsBinds GHC.Id -> GHC.Ghc r }
