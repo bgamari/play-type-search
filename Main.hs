@@ -15,8 +15,8 @@ import Outputable hiding ((<>))
 newtype Matcher = Matcher
     { runMatcher :: forall r. Monoid r => (GHC.LHsBind GHC.Id -> r) -> GHC.LHsBinds GHC.Id -> GHC.Ghc r }
 
-data Opts = Opts { sourceFiles :: [FilePath]
-                 , matcher     :: Matcher
+data Opts = Opts { matcher     :: Matcher
+                 , sourceFiles :: [FilePath]
                  }
 
 pureMatcher :: (a -> GHC.Ghc b)
@@ -26,9 +26,10 @@ pureMatcher prepare match x =
     Matcher $ \f binds -> prepare x >>= \y -> pure $ match y f binds
 
 opts = Opts
-       <$> many (strArgument $ metavar "MODULE.hs" <> help "Haskell source modules to search within")
-       <*> (typeContains <|> ofType)
+       <$> matchers
+       <*> many (strArgument $ metavar "MODULE.hs" <> help "Haskell source modules to search within")
   where
+    matchers = typeContains <|> ofType
     typeContains = pureMatcher lookupType foldBindsContainingType
                    <$> strOption (  long "containing"
                                  <> help "Find bindings whose type mentions the given type"
