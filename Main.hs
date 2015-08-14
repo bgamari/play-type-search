@@ -6,11 +6,13 @@ import Data.Generics
 import Data.Foldable
 import Control.Monad (mzero)
 import Control.Monad.IO.Class
-import DynFlags
 
+import DynFlags
+import GhcMonad (withTempSession)
 import qualified GHC
 import qualified GHC.Paths
 import qualified TypeRep
+import qualified Unify
 import Digraph (flattenSCCs) -- this should be expected from GHC
 import Outputable hiding ((<>))
 
@@ -42,7 +44,7 @@ opts = Opts
                    <> value Verbosity.normal)
   where
     matchers = typeContains <|> typeContainsCon <|> ofType
-    typeContains = pureMatcher lookupType foldBindsContainingType
+    typeContains = pureMatcher (withRankNTypes . lookupType) foldBindsContainingType
                    <$> strOption (  long "containing"
                                  <> help "Find bindings whose type mentions the given type"
                                  <> metavar "TYPE")
@@ -50,7 +52,7 @@ opts = Opts
                       <$> strOption (  long "containing-con"
                                     <> help "Find bindings whose type mentions the given type constructor"
                                     <> metavar "TYPECON")
-    ofType = pureMatcher lookupType foldBindsOfType
+    ofType = pureMatcher (withRankNTypes . lookupType) foldBindsOfType
              <$> strOption (   long "of-type"
                             <> help "Find bindings of the given type"
                             <> metavar "TYPE")
@@ -59,14 +61,34 @@ main = do
     args <- execParser $ info (helper <*> opts) mempty
     GHC.runGhc (Just GHC.Paths.libdir) (runMatch args)
 
+setupDynFlags :: Opts -> GHC.Ghc GHC.DynFlags
+setupDynFlags args = session >> interactive >> GHC.getSessionDynFlags
+  where
+    session = do
+        -- Note that this initial {get,set}SessionDynFlags is not idempotent
+        dflags <- GHC.getSessionDynFlags
+        dflags' <- fromMaybe dflags <$> liftIO (initCabalDynFlags (verbose args) dflags)
+        GHC.setSessionDynFlags dflags' { hscTarget = HscNothing }
+
+    interactive = do
+        dflags <- GHC.getInteractiveDynFlags
+        -- Enable RankNTypes so that the user can quantify over type variables
+        let dflags' = xopt_set dflags Opt_ExplicitForAll
+        GHC.setInteractiveDynFlags dflags'
+
+withRankNTypes :: GHC.Ghc a -> GHC.Ghc a
+withRankNTypes = withTempSession $ modifyDynFlags (flip xopt_set Opt_RankNTypes)
+  where
+    modifyDynFlags :: ContainsDynFlags t => (DynFlags -> DynFlags) -> t -> t
+    modifyDynFlags f env = replaceDynFlags env (f $ extractDynFlags env)
+
 runMatch :: Opts -> GHC.Ghc ()
 runMatch args = GHC.defaultErrorHandler defaultFatalMessager defaultFlushOut $ do
-    -- Note that this initial {get,set}SessionDynFlags is not idempotent
-    dflags <- GHC.getSessionDynFlags
-    dflags' <- fromMaybe dflags <$> liftIO (initCabalDynFlags (verbose args) dflags)
-    GHC.setSessionDynFlags dflags' { hscTarget = HscNothing }
+    dflags <- setupDynFlags args
     let printSDoc :: SDoc -> GHC.Ghc ()
         printSDoc = liftIO . putStrLn . showSDoc dflags
+        debugSDoc :: SDoc -> GHC.Ghc ()
+        debugSDoc = liftIO . Utils.debug (verbose args) . showSDoc dflags
 
     targets <- mapM (\s -> GHC.guessTarget s Nothing) (sourceFiles args)
     GHC.setTargets targets
@@ -82,8 +104,6 @@ runMatch args = GHC.defaultErrorHandler defaultFatalMessager defaultFlushOut $ d
     let modNames = map (GHC.moduleName . GHC.ms_mod) graph
     GHC.setContext $ map GHC.IIModule modNames
 
-    let debugSDoc :: SDoc -> GHC.Ghc ()
-        debugSDoc = liftIO . Utils.debug (verbose args) . showSDoc dflags
     debugSDoc $ vcat $ map (ppr . GHC.tm_typechecked_source) (toList typechecked)
 
     matches <- concat <$> mapM (runMatcher (matcher args) (\a->[a])
@@ -123,8 +143,9 @@ foldBindsContainingType ty f = everything mappend (mempty `mkQ` go)
     go bind@(GHC.L _ (GHC.FunBind {GHC.fun_id=GHC.L _ fid}))
       | getAny $ everything mappend (mempty `mkQ` containsType) (GHC.idType fid) = f bind
       where
-        containsType ty' | ty == ty' = Any True
-        containsType _               = mempty
+        containsType ty'
+          | Just _ <- ty `Unify.tcUnifyTy` ty' = Any True
+        containsType _                         = mempty
     go _ = mempty
 
 foldBindsContainingTyCon :: Monoid r
