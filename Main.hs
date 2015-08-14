@@ -12,9 +12,11 @@ import GhcMonad (withTempSession)
 import qualified GHC
 import qualified GHC.Paths
 import qualified TypeRep
+import           TypeRep (Type(..))
 import qualified Unify
 import Digraph (flattenSCCs) -- this should be expected from GHC
 import Outputable hiding ((<>))
+import VarSet
 import qualified HscTypes
 
 import Options.Applicative hiding ((<>))
@@ -124,8 +126,8 @@ lookupType tyName = fst <$> GHC.typeKind False tyName
 lookupTyCon :: String -> GHC.Ghc GHC.TyCon
 lookupTyCon tyConName = getTyCon <$> lookupType tyConName
   where
-    getTyCon (TypeRep.TyConApp tyCon _) = tyCon
-    getTyCon _                          =
+    getTyCon (TyConApp tyCon _) = tyCon
+    getTyCon _                  =
       error "lookupTyCon: Expected type constructor application"
 
 foldBindsOfType :: (Monoid r)
@@ -145,10 +147,20 @@ foldBindsContainingType ty f = everything mappend (mempty `mkQ` go)
     go bind@(GHC.L _ (GHC.FunBind {GHC.fun_id=GHC.L _ fid}))
       | getAny $ everything mappend (mempty `mkQ` containsType) (GHC.idType fid) = f bind
       where
+        -- a type variable will unify with anything
+        --containsType (TyVarTy _)       = mempty
         containsType ty'
-          | Just _ <- ty `Unify.tcUnifyTy` ty' = Any True
+          | Just _ <- Unify.tcMatchTy tyVars strippedTy ty' = Any True
         containsType _                         = mempty
     go _ = mempty
+
+    -- We don't necessarily want to match on the foralls the user needed to
+    -- merely bring type variables into scope
+    stripForAlls :: VarSet -> Type -> (Type, VarSet)
+    stripForAlls vars (ForAllTy var ty) = stripForAlls (VarSet.extendVarSet vars var) ty
+    stripForAlls vars ty                = (ty, vars)
+
+    (strippedTy, tyVars) = stripForAlls VarSet.emptyVarSet ty
 
 foldBindsContainingTyCon :: Monoid r
                         => GHC.TyCon -> (GHC.LHsBind GHC.Id -> r)
