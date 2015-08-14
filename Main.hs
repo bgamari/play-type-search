@@ -4,6 +4,7 @@ import qualified Distribution.Verbosity as Verbosity
 import Data.Monoid
 import Data.Generics
 import Data.Foldable
+import Control.Monad (mzero)
 import Control.Monad.IO.Class
 import DynFlags
 import qualified GHC
@@ -20,6 +21,7 @@ newtype Matcher = Matcher
 
 data Opts = Opts { matcher     :: Matcher
                  , sourceFiles :: [FilePath]
+                 , verbose     :: Verbosity.Verbosity
                  }
 
 pureMatcher :: (a -> GHC.Ghc b)
@@ -31,6 +33,9 @@ pureMatcher prepare match x =
 opts = Opts
        <$> matchers
        <*> many (strArgument $ metavar "MODULE.hs" <> help "Haskell source modules to search within")
+       <*> option (maybe mzero pure . Verbosity.intToVerbosity =<< auto)
+                  (short 'v' <> long "verbose" <> metavar "N" <> help "Verbosity level"
+                   <> value Verbosity.normal)
   where
     matchers = typeContains <|> ofType
     typeContains = pureMatcher lookupType foldBindsContainingType
@@ -50,7 +55,7 @@ runMatch :: Opts -> GHC.Ghc ()
 runMatch args = GHC.defaultErrorHandler defaultFatalMessager defaultFlushOut $ do
     -- Note that this initial {get,set}SessionDynFlags is not idempotent
     dflags <- GHC.getSessionDynFlags
-    Just dflags' <- liftIO $ initCabalDynFlags Verbosity.normal dflags
+    Just dflags' <- liftIO $ initCabalDynFlags (verbose args) dflags
     GHC.setSessionDynFlags dflags' { hscTarget = HscNothing }
     let printSDoc :: SDoc -> GHC.Ghc ()
         printSDoc = liftIO . putStrLn . showSDoc dflags
