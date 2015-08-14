@@ -2,12 +2,25 @@
 -- is handling integration with Cabal. This library provides a simple
 -- interface for configuring GHC's 'DynFlags' as Cabal would have,
 -- allowing seamless tooling use on Cabal projects.
+--
+-- A typical usage might look like,
+-- @
+-- import GHC
+-- import qualified GHC.Paths
+-- import qualified Distribution.Verbosity as Verbosity
+--
+-- main = runGhc (Just GHC.Paths.libdir) $ do
+--     dflags <- GHC.getSessionDynFlags
+--     -- Use default DynFlags if we aren't in a Cabal project
+--     dflags' <- fromMaybe dflags <$> liftIO (initCabalDynFlags Verbosity.normal dflags)
+--     GHC.setSessionDynFlags dflags'
+--
+--     -- Standard GHC API usage goes here
+-- @
 
 module Cabal (
       -- * Initializing GHC DynFlags for Cabal packages
-      initCabalDynFlags, initCabalDynFlags'
-      -- * Re-exports
-    , Verbosity
+      initCabalDynFlags
     ) where
 
 import Control.Monad (guard, msum, mzero)
@@ -33,6 +46,7 @@ import qualified SrcLoc
 data CabalDetails = CabalDetails { cdLocalBuildInfo :: LocalBuildInfo
                                  }
 
+-- | Modify a set of 'DynFlags' to match what Cabal would produce.
 initCabalDynFlags :: Verbosity -> DynFlags -> IO (Maybe DynFlags)
 initCabalDynFlags verbosity dflags0 = runMaybeT $ do
     let warnNoCabal _err = lift (warn verbosity "Couldn't find cabal file") >> mzero
