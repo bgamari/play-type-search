@@ -1,6 +1,5 @@
 {-# LANGUAGE RankNTypes #-}
 
-import qualified Distribution.Verbosity as Verbosity
 import Data.Monoid
 import Data.Maybe (fromMaybe)
 import Data.Generics
@@ -8,13 +7,17 @@ import Data.Foldable
 import Control.Monad (mzero)
 import Control.Monad.IO.Class
 import DynFlags
+
 import qualified GHC
 import qualified GHC.Paths
+import qualified TypeRep
 import Digraph (flattenSCCs) -- this should be expected from GHC
-import Options.Applicative hiding ((<>))
-
 import Outputable hiding ((<>))
 
+import Options.Applicative hiding ((<>))
+
+import qualified Distribution.Verbosity as Verbosity
+import qualified Distribution.Simple.Utils as Utils
 import Cabal
 
 newtype Matcher = Matcher
@@ -38,11 +41,15 @@ opts = Opts
                   (short 'v' <> long "verbose" <> metavar "N" <> help "Verbosity level"
                    <> value Verbosity.normal)
   where
-    matchers = typeContains <|> ofType
+    matchers = typeContains <|> typeContainsCon <|> ofType
     typeContains = pureMatcher lookupType foldBindsContainingType
                    <$> strOption (  long "containing"
                                  <> help "Find bindings whose type mentions the given type"
                                  <> metavar "TYPE")
+    typeContainsCon = pureMatcher lookupTyCon foldBindsContainingTyCon
+                      <$> strOption (  long "containing-con"
+                                    <> help "Find bindings whose type mentions the given type constructor"
+                                    <> metavar "TYPECON")
     ofType = pureMatcher lookupType foldBindsOfType
              <$> strOption (   long "of-type"
                             <> help "Find bindings of the given type"
@@ -75,6 +82,10 @@ runMatch args = GHC.defaultErrorHandler defaultFatalMessager defaultFlushOut $ d
     let modNames = map (GHC.moduleName . GHC.ms_mod) graph
     GHC.setContext $ map GHC.IIModule modNames
 
+    let debugSDoc :: SDoc -> GHC.Ghc ()
+        debugSDoc = liftIO . Utils.debug (verbose args) . showSDoc dflags
+    debugSDoc $ vcat $ map (ppr . GHC.tm_typechecked_source) (toList typechecked)
+
     matches <- concat <$> mapM (runMatcher (matcher args) (\a->[a])
                                 . GHC.tm_typechecked_source)
                                (toList typechecked)
@@ -86,6 +97,14 @@ pprLocated (GHC.L l e) = braces (ppr l) $$ nest 4 (ppr e)
 -- | Thows error if not in scope
 lookupType :: String -> GHC.Ghc GHC.Type
 lookupType tyName = fst <$> GHC.typeKind False tyName
+
+-- | aw
+lookupTyCon :: String -> GHC.Ghc GHC.TyCon
+lookupTyCon tyConName = getTyCon <$> lookupType tyConName
+  where
+    getTyCon (TypeRep.TyConApp tyCon _) = tyCon
+    getTyCon _                          =
+      error "lookupTyCon: Expected type constructor application"
 
 foldBindsOfType :: (Monoid r)
                 => GHC.Type -> (GHC.LHsBind GHC.Id -> r)
@@ -103,6 +122,19 @@ foldBindsContainingType ty f = everything mappend (mempty `mkQ` go)
   where
     go bind@(GHC.L _ (GHC.FunBind {GHC.fun_id=GHC.L _ fid}))
       | getAny $ everything mappend (mempty `mkQ` containsType) (GHC.idType fid) = f bind
-      where containsType ty' | ty == ty' = Any True
-            containsType _               = mempty
+      where
+        containsType ty' | ty == ty' = Any True
+        containsType _               = mempty
+    go _ = mempty
+
+foldBindsContainingTyCon :: Monoid r
+                        => GHC.TyCon -> (GHC.LHsBind GHC.Id -> r)
+                        -> GHC.LHsBinds GHC.Id -> r
+foldBindsContainingTyCon tyCon f = everything mappend (mempty `mkQ` go)
+  where
+    go bind@(GHC.L _ (GHC.FunBind {GHC.fun_id=GHC.L _ fid}))
+      | getAny $ everything mappend (mempty `mkQ` containsTyCon) (GHC.idType fid) = f bind
+      where
+        containsTyCon tyCon' | tyCon == tyCon' = Any True
+        containsTyCon _                        = mempty
     go _ = mempty
