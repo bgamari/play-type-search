@@ -15,6 +15,7 @@ import qualified TypeRep
 import qualified Unify
 import Digraph (flattenSCCs) -- this should be expected from GHC
 import Outputable hiding ((<>))
+import qualified HscTypes
 
 import Options.Applicative hiding ((<>))
 
@@ -44,7 +45,7 @@ opts = Opts
                    <> value Verbosity.normal)
   where
     matchers = typeContains <|> typeContainsCon <|> ofType
-    typeContains = pureMatcher (withRankNTypes . lookupType) foldBindsContainingType
+    typeContains = pureMatcher (withExplicitForAll . lookupType) foldBindsContainingType
                    <$> strOption (  long "containing"
                                  <> help "Find bindings whose type mentions the given type"
                                  <> metavar "TYPE")
@@ -52,7 +53,7 @@ opts = Opts
                       <$> strOption (  long "containing-con"
                                     <> help "Find bindings whose type mentions the given type constructor"
                                     <> metavar "TYPECON")
-    ofType = pureMatcher (withRankNTypes . lookupType) foldBindsOfType
+    ofType = pureMatcher (withExplicitForAll . lookupType) foldBindsOfType
              <$> strOption (   long "of-type"
                             <> help "Find bindings of the given type"
                             <> metavar "TYPE")
@@ -62,7 +63,7 @@ main = do
     GHC.runGhc (Just GHC.Paths.libdir) (runMatch args)
 
 setupDynFlags :: Opts -> GHC.Ghc GHC.DynFlags
-setupDynFlags args = session >> interactive >> GHC.getSessionDynFlags
+setupDynFlags args = session >> GHC.getSessionDynFlags
   where
     session = do
         -- Note that this initial {get,set}SessionDynFlags is not idempotent
@@ -70,17 +71,18 @@ setupDynFlags args = session >> interactive >> GHC.getSessionDynFlags
         dflags' <- fromMaybe dflags <$> liftIO (initCabalDynFlags (verbose args) dflags)
         GHC.setSessionDynFlags dflags' { hscTarget = HscNothing }
 
-    interactive = do
-        dflags <- GHC.getInteractiveDynFlags
-        -- Enable RankNTypes so that the user can quantify over type variables
-        let dflags' = xopt_set dflags Opt_ExplicitForAll
-        GHC.setInteractiveDynFlags dflags'
-
-withRankNTypes :: GHC.Ghc a -> GHC.Ghc a
-withRankNTypes = withTempSession $ modifyDynFlags (flip xopt_set Opt_RankNTypes)
+withExplicitForAll :: GHC.Ghc a -> GHC.Ghc a
+withExplicitForAll =
+    withTempSession $ modifyIC (modifyDynFlags $ flip xopt_set Opt_ExplicitForAll)
   where
+    modifyIC f env = env { HscTypes.hsc_IC = f (HscTypes.hsc_IC env) }
+
     modifyDynFlags :: ContainsDynFlags t => (DynFlags -> DynFlags) -> t -> t
     modifyDynFlags f env = replaceDynFlags env (f $ extractDynFlags env)
+
+instance ContainsDynFlags HscTypes.InteractiveContext where
+    extractDynFlags = HscTypes.ic_dflags
+    replaceDynFlags ic dflags = ic {HscTypes.ic_dflags = dflags}
 
 runMatch :: Opts -> GHC.Ghc ()
 runMatch args = GHC.defaultErrorHandler defaultFatalMessager defaultFlushOut $ do
