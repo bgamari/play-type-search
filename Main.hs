@@ -70,9 +70,17 @@ setupDynFlags args = session >> GHC.getSessionDynFlags
     session = do
         -- Note that this initial {get,set}SessionDynFlags is not idempotent
         dflags <- GHC.getSessionDynFlags
-        dflags' <- fromMaybe dflags <$> liftIO (initCabalDynFlags (verbose args) dflags)
+        (dflags', cd) <- maybe (dflags, Nothing) (\(a,b)->(a, Just b))
+                         <$> liftIO (initCabalDynFlags (verbose args) dflags)
         GHC.setSessionDynFlags dflags' { hscTarget = HscNothing }
 
+        let targets = fmap (componentTargets . cdComponent) cd
+        liftIO $ Utils.debug (verbose args) $ showSDoc dflags
+          $ text "Targets" <+> ppr targets
+        traverse GHC.setTargets targets
+
+-- | Run a 'Ghc' action in a modified environment with 'Opt_ExplicitForAll'
+-- enabled in the interactive 'DynFlags'
 withExplicitForAll :: GHC.Ghc a -> GHC.Ghc a
 withExplicitForAll =
     withTempSession $ modifyIC (modifyDynFlags $ flip xopt_set Opt_ExplicitForAll)
@@ -95,7 +103,7 @@ runMatch args = GHC.defaultErrorHandler defaultFatalMessager defaultFlushOut $ d
         debugSDoc = liftIO . Utils.debug (verbose args) . showSDoc dflags
 
     targets <- mapM (\s -> GHC.guessTarget s Nothing) (sourceFiles args)
-    GHC.setTargets targets
+    GHC.getTargets >>= GHC.setTargets . (++targets)
 
     summaries <- GHC.depanal [] True
     let graph = flattenSCCs $ GHC.topSortModuleGraph True summaries Nothing
