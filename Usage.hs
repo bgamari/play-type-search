@@ -91,5 +91,5 @@ foldBindsContainingIdent ident f = everything mappend (mempty `mkQ` go)
       | getAny $ everything mappend (mempty `mkQ` containsId) bind = f bind
       where
         containsId ident' | ident == ident' = Any True
-        containsTyCon _                     = mempty
+        containsId _                        = mempty
     go _ = mempty

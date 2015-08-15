@@ -47,6 +47,7 @@ pureMatcher :: (a -> GHC.Ghc b)
 pureMatcher prepare match x =
     Matcher $ \f binds -> prepare x >>= \y -> pure $ match y f binds
 
+opts :: Parser Opts
 opts = Opts
        <$> (matchMode <|> deadCodeMode)
        <*> optional (strOption $ long "builddir" <> metavar "DIR" <> help "cabal dist/ directory")
@@ -82,7 +83,7 @@ setupDynFlags args = session >> GHC.getSessionDynFlags
         dflags <- GHC.getSessionDynFlags
         (dflags', cd) <- maybe (dflags, Nothing) (\(a,b)->(a, Just b))
                          <$> liftIO (initCabalDynFlags (verbose args) (distDir args) dflags)
-        GHC.setSessionDynFlags dflags' { hscTarget = HscNothing }
+        _ <- GHC.setSessionDynFlags dflags' { hscTarget = HscNothing }
 
         let targets = fmap (componentTargets . cdComponent) cd
         liftIO $ Utils.debug (verbose args) $ showSDoc dflags
@@ -104,6 +105,7 @@ instance ContainsDynFlags HscTypes.InteractiveContext where
     extractDynFlags = HscTypes.ic_dflags
     replaceDynFlags ic dflags = ic {HscTypes.ic_dflags = dflags}
 
+main :: IO ()
 main = do
     args <- execParser $ info (helper <*> opts) mempty
     GHC.runGhc (Just GHC.Paths.libdir) (ghcMain args)
@@ -111,9 +113,7 @@ main = do
 ghcMain :: Opts -> GHC.Ghc ()
 ghcMain args = GHC.defaultErrorHandler defaultFatalMessager defaultFlushOut $ do
     dflags <- setupDynFlags args
-    let printSDoc :: SDoc -> GHC.Ghc ()
-        printSDoc = liftIO . putStrLn . showSDoc dflags
-        debugSDoc :: SDoc -> GHC.Ghc ()
+    let debugSDoc :: SDoc -> GHC.Ghc ()
         debugSDoc = liftIO . Utils.debug (verbose args) . showSDoc dflags
 
     targets <- mapM (\s -> GHC.guessTarget s Nothing) (sourceFiles args)
@@ -123,12 +123,10 @@ ghcMain args = GHC.defaultErrorHandler defaultFatalMessager defaultFlushOut $ do
     let graph = flattenSCCs $ GHC.topSortModuleGraph True summaries Nothing
     let processModule :: GHC.ModSummary -> GHC.Ghc GHC.TypecheckedModule
         processModule ms = do
-            tcd <- GHC.parseModule ms >>= GHC.typecheckModule
-            GHC.loadModule tcd
-            return tcd
+            GHC.parseModule ms >>= GHC.typecheckModule >>= GHC.loadModule
     typechecked <- mapM processModule graph
     let modNames = map (GHC.moduleName . GHC.ms_mod) graph
-    GHC.setContext $ map GHC.IIModule modNames
+    _ <- GHC.setContext $ map GHC.IIModule modNames
 
     debugSDoc $ vcat $ map (ppr . GHC.tm_typechecked_source) (toList typechecked)
     --printSDoc $ ppr $ usageGraph (map GHC.tm_typechecked_source (toList typechecked))
