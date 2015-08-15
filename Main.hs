@@ -17,16 +17,17 @@ import Control.Monad.IO.Class
 import DynFlags
 import GhcMonad (withTempSession)
 import qualified GHC
+import           GHC (GenLocated(L), unLoc)
 import qualified GHC.Paths
 import qualified TypeRep
 import           TypeRep (Type(..))
 import qualified Unify
 import qualified OccName
-import           VarEnv
 import qualified Var
 import qualified Type
 import Digraph (flattenSCCs) -- this should be expected from GHC
 import Outputable hiding ((<>))
+import VarEnv
 import VarSet
 import qualified HscTypes
 
@@ -137,7 +138,7 @@ runMatch args = GHC.defaultErrorHandler defaultFatalMessager defaultFlushOut $ d
     printSDoc $ vcat $ map pprLocated matches
 
 pprLocated :: (Outputable l, Outputable e) => GHC.GenLocated l e -> SDoc
-pprLocated (GHC.L l e) = braces (ppr l) $$ nest 4 (ppr e)
+pprLocated (L l e) = braces (ppr l) $$ nest 4 (ppr e)
 
 -- | Thows error if not in scope
 lookupType :: String -> GHC.Ghc GHC.Type
@@ -156,7 +157,7 @@ foldBindsOfType :: (Monoid r)
                 -> GHC.LHsBinds GHC.Id -> r
 foldBindsOfType ty f = everything mappend (mempty `mkQ` go)
   where
-    go bind@(GHC.L _ (GHC.FunBind {GHC.fun_id=GHC.L _ fid}))
+    go bind@(L _ (GHC.FunBind {GHC.fun_id=L _ fid}))
       | GHC.idType fid `Type.eqType` ty = f bind
     go _ = mempty
 
@@ -165,7 +166,7 @@ foldBindsContainingType :: Monoid r
                         -> GHC.LHsBinds GHC.Id -> r
 foldBindsContainingType ty f = everything mappend (mempty `mkQ` go)
   where
-    go bind@(GHC.L _ (GHC.FunBind {GHC.fun_id=GHC.L _ fid}))
+    go bind@(L _ (GHC.FunBind {GHC.fun_id=L _ fid}))
       | getAny $ everything mappend (mempty `mkQ` containsType) (GHC.idType fid) = f bind
       where
         -- a type variable will unify with anything
@@ -211,7 +212,7 @@ foldBindsContainingTyCon :: Monoid r
                         -> GHC.LHsBinds GHC.Id -> r
 foldBindsContainingTyCon tyCon f = everything mappend (mempty `mkQ` go)
   where
-    go bind@(GHC.L _ (GHC.FunBind {GHC.fun_id=GHC.L _ fid}))
+    go bind@(L _ (GHC.FunBind {GHC.fun_id=L _ fid}))
       | getAny $ everything mappend (mempty `mkQ` containsTyCon) (GHC.idType fid) = f bind
       where
         containsTyCon tyCon' | tyCon == tyCon' = Any True
