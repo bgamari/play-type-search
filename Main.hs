@@ -40,6 +40,7 @@ newtype Matcher = Matcher
     { runMatcher :: forall r. Monoid r => (GHC.LHsBind GHC.Id -> r) -> GHC.LHsBinds GHC.Id -> GHC.Ghc r }
 
 data Opts = Opts { matcher     :: Matcher
+                 , distDir     :: Maybe String
                  , sourceFiles :: [FilePath]
                  , verbose     :: Verbosity.Verbosity
                  }
@@ -52,6 +53,7 @@ pureMatcher prepare match x =
 
 opts = Opts
        <$> matchers
+       <*> optional (strOption $ long "builddir" <> metavar "DIR" <> help "cabal dist/ directory")
        <*> many (strArgument $ metavar "MODULE.hs" <> help "Haskell source modules to search within")
        <*> option (maybe mzero pure . Verbosity.intToVerbosity =<< auto)
                   (short 'v' <> long "verbose" <> metavar "N" <> help "Verbosity level"
@@ -82,7 +84,7 @@ setupDynFlags args = session >> GHC.getSessionDynFlags
         -- Note that this initial {get,set}SessionDynFlags is not idempotent
         dflags <- GHC.getSessionDynFlags
         (dflags', cd) <- maybe (dflags, Nothing) (\(a,b)->(a, Just b))
-                         <$> liftIO (initCabalDynFlags (verbose args) dflags)
+                         <$> liftIO (initCabalDynFlags (verbose args) (distDir args) dflags)
         GHC.setSessionDynFlags dflags' { hscTarget = HscNothing }
 
         let targets = fmap (componentTargets . cdComponent) cd
