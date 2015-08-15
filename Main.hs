@@ -1,4 +1,10 @@
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE CPP        #-}
+
+#if !MIN_VERSION_base(4,8,0)
+import Prelude hiding (mapM, concat)
+import Data.Traversable (traverse, mapM)
+#endif
 
 import Data.Monoid
 import Data.Maybe (fromMaybe)
@@ -149,7 +155,7 @@ foldBindsOfType :: (Monoid r)
 foldBindsOfType ty f = everything mappend (mempty `mkQ` go)
   where
     go bind@(GHC.L _ (GHC.FunBind {GHC.fun_id=GHC.L _ fid}))
-      | GHC.idType fid == ty = f bind
+      | GHC.idType fid `Type.eqType` ty = f bind
     go _ = mempty
 
 foldBindsContainingType :: Monoid r

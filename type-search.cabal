@@ -16,9 +16,9 @@ executable type-search
   main-is:             Main.hs
   -- other-modules:       
   -- other-extensions:    
-  build-depends:       base >=4.8 && <4.9,
+  build-depends:       base >=4.7 && <4.9,
                        ghc-paths >=0.1 && <0.2,
-                       ghc ==7.10.2,
+                       ghc >=7.8,
                        transformers,
                        syb,
                        optparse-applicative,
