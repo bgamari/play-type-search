@@ -1,5 +1,8 @@
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE CPP        #-}
+{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE CPP #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 #if !MIN_VERSION_base(4,8,0)
 import Prelude hiding (mapM, concat)
@@ -26,9 +29,11 @@ import qualified OccName
 import qualified Var
 import qualified Type
 import Digraph (flattenSCCs) -- this should be expected from GHC
+import qualified Digraph
 import Outputable hiding ((<>))
 import VarEnv
 import VarSet
+import Bag
 import qualified HscTypes
 
 import Options.Applicative hiding ((<>))
@@ -131,6 +136,8 @@ runMatch args = GHC.defaultErrorHandler defaultFatalMessager defaultFlushOut $ d
     GHC.setContext $ map GHC.IIModule modNames
 
     debugSDoc $ vcat $ map (ppr . GHC.tm_typechecked_source) (toList typechecked)
+    printSDoc $ ppr $ deadBindings (map GHC.tm_typechecked_source (toList typechecked))
+    printSDoc $ ppr $ usageGraph (map GHC.tm_typechecked_source (toList typechecked))
 
     matches <- concat <$> mapM (runMatcher (matcher args) (\a->[a])
                                 . GHC.tm_typechecked_source)
@@ -218,3 +225,99 @@ foldBindsContainingTyCon tyCon f = everything mappend (mempty `mkQ` go)
         containsTyCon tyCon' | tyCon == tyCon' = Any True
         containsTyCon _                        = mempty
     go _ = mempty
+
+foldBindsContainingIdent :: Monoid r
+                         => GHC.Id -> (GHC.LHsBind GHC.Id -> r)
+                         -> GHC.LHsBinds GHC.Id -> r
+foldBindsContainingIdent ident f = everything mappend (mempty `mkQ` go)
+  where
+    go bind
+      | getAny $ everything mappend (mempty `mkQ` containsId) bind = f bind
+      where
+        containsId ident' | ident == ident' = Any True
+        containsTyCon _                     = mempty
+    go _ = mempty
+
+-- | Recursive top-down query
+everythingM :: (Monoid r, Typeable b, Data a) => (b -> r) -> a -> r
+everythingM f = everything mappend (mempty `mkQ` f)
+
+gmapQlM :: (Monoid r, Typeable b, Data a) => (b -> r) -> a -> r
+gmapQlM f = gmapQl mappend mempty (mempty `mkQ` f)
+
+data Pair a b = Pair !a !b
+instance (Monoid a, Monoid b) => Monoid (Pair a b) where
+    mempty = Pair mempty mempty
+    Pair a b `mappend` Pair x y = Pair (a `mappend` x) (b `mappend` y)
+
+-- | A set of identifiers and their associated binding
+type BindSet = VarEnv (GHC.LHsBind GHC.Id)
+
+usageGraph :: [GHC.TypecheckedSource] -> Digraph.Graph (Digraph.Node GHC.Id ())
+usageGraph = Digraph.graphFromEdgedVertices . foldMap (foldMap bind . bagToList)
+  where
+    bind :: GHC.LHsBind GHC.Id -> [Digraph.Node GHC.Id ()]
+    bind bind@(L _ (GHC.FunBind { GHC.fun_id=L _ id
+                                , GHC.fun_matches=matches
+                                })) =
+        [((), id, usedBinders)]
+      where
+        usedBinders = everythingM binderList matches
+        binderList :: GHC.HsExpr GHC.Id -> [GHC.Id]
+        binderList (GHC.HsVar x) = [x]
+        binderList _             = []
+    bind (L _ (GHC.AbsBinds { GHC.abs_binds = binds })) =
+        foldMap bind (bagToList binds)
+    bind _ = mempty
+
+-- | Identify the dead bindings in a source tree
+deadBindings :: [GHC.TypecheckedSource] -> [GHC.LHsBind GHC.Id]
+deadBindings mods =
+    varEnvElts $ fold $ takeWhile (not . isEmptyVarEnv) $ iterate go emptyVarEnv
+  where
+    -- find all defined top-level binders
+    definedBinders :: BindSet
+    definedBinders = foldMap (foldMap binder . bagToList) mods
+      where
+        binder :: GHC.LHsBind GHC.Id -> BindSet
+        binder bind@(L _ (GHC.FunBind {GHC.fun_id=L _ id})) = unitVarEnv id bind
+        binder _                                            = mempty
+
+    findUsedBinders :: BindSet -> VarSet
+    findUsedBinders knownDead = everythingWithTrunc mappend ((mempty, True) `mkQ` used) mods
+      where
+        -- the set of binders used by the given binding
+        used :: GHC.LHsBind GHC.Id -> (VarSet, Bool)
+        used (L _ (GHC.FunBind {GHC.fun_id=L _ id, GHC.fun_matches=matches}))
+          -- we don't care what a binding uses if it is already known to be dead
+          | id `elemVarEnv` knownDead = (mempty, False)
+          | otherwise                 = (usedBinders, True)
+          where
+            -- we don't care about recursive uses
+            usedBinders = everythingM usage matches `delVarEnv` id
+              where
+                usage :: GHC.HsExpr GHC.Id -> VarSet
+                usage (GHC.HsVar x) = unitVarSet x
+                usage _             = emptyVarSet
+        used bind = (usedBinders, True) where usedBinders = everythingM unitVarSet bind
+
+    go :: BindSet -> BindSet
+    go knownDead = definedBinders `minusVarEnv` findUsedBinders knownDead
+
+
+-- TODO:
+--   Construction/destruction queries
+
+
+-- | Summarise all nodes in top-down, left-to-right order, potentially
+-- truncating some branches of the tree.
+--
+-- Return 'False' to truncate traversal.
+everythingWithTrunc :: forall r. (r -> r -> r) -> GenericQ (r, Bool) -> GenericQ r
+everythingWithTrunc f q = go
+  where
+    go :: Data a => a -> r
+    go x
+      | s         = foldl f r (gmapQ go x)
+      | otherwise = r
+      where (r, s) = q x
