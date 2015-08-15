@@ -4,6 +4,7 @@ import Data.Monoid
 import Data.Maybe (fromMaybe)
 import Data.Generics
 import Data.Foldable
+import Data.List (isSuffixOf)
 import Control.Monad (mzero)
 import Control.Monad.IO.Class
 
@@ -14,6 +15,10 @@ import qualified GHC.Paths
 import qualified TypeRep
 import           TypeRep (Type(..))
 import qualified Unify
+import qualified OccName
+import           VarEnv
+import qualified Var
+import qualified Type
 import Digraph (flattenSCCs) -- this should be expected from GHC
 import Outputable hiding ((<>))
 import VarSet
@@ -157,9 +162,30 @@ foldBindsContainingType ty f = everything mappend (mempty `mkQ` go)
       where
         -- a type variable will unify with anything
         --containsType (TyVarTy _)       = mempty
+
+        -- We first check whether the types match, allowing all type variables to vary.
+        -- This, however, is too lenient: the matcher is free to introduce equalities
+        -- between our template variables. So, if this matches we then take the
+        -- resulting substitution
         containsType ty'
-          | Just _ <- Unify.tcMatchTy tyVars strippedTy ty' = Any True
-        containsType _                         = mempty
+          | Just subst <- Unify.tcMatchTy tyVars strippedTy ty'
+          , bijectiveSubst subst
+                      = --trace (showSDoc unsafeGlobalDynFlags $ ppr (strippedTy, ty', Type.tyVarsOfType ty', subst, tyVars)) $
+                        Any True
+          | otherwise = --trace (showSDoc unsafeGlobalDynFlags $ ppr
+                        --       $ let subst = Unify.tcMatchTy tyVars strippedTy ty'
+                        --         in (subst, Type.tyVarsOfType ty'))
+                        mempty
+          where
+            bijectiveSubst :: Type.TvSubst -> Bool
+            bijectiveSubst (Type.TvSubst _ subst) = iter emptyVarSet (varEnvElts subst)
+              where
+                iter :: VarSet -> [Type] -> Bool
+                iter _             []                = True
+                iter claimedTyVars (TypeRep.TyVarTy tyVar:rest)
+                  | tyVar `elemVarSet` claimedTyVars = False
+                  | otherwise                        = iter (extendVarSet claimedTyVars tyVar) rest
+                iter claimedTyVars (_:rest)          = iter claimedTyVars rest
     go _ = mempty
 
     -- We don't necessarily want to match on the foralls the user needed to
@@ -167,8 +193,10 @@ foldBindsContainingType ty f = everything mappend (mempty `mkQ` go)
     stripForAlls :: VarSet -> Type -> (Type, VarSet)
     stripForAlls vars (ForAllTy var ty) = stripForAlls (VarSet.extendVarSet vars var) ty
     stripForAlls vars ty                = (ty, vars)
-
     (strippedTy, tyVars) = stripForAlls VarSet.emptyVarSet ty
+
+    isPrimed var = "'" `isSuffixOf` OccName.occNameString (OccName.occName $ Var.varName var)
+    templVars = VarSet.filterVarSet (not . isPrimed) tyVars
 
 foldBindsContainingTyCon :: Monoid r
                         => GHC.TyCon -> (GHC.LHsBind GHC.Id -> r)
