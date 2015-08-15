@@ -1,33 +1,14 @@
 module Reachability (unreachableBinders) where
 
-import Data.Monoid
 import Data.Maybe (mapMaybe)
-import Data.Generics
 import Data.Foldable
-import Data.List (isSuffixOf)
-import Control.Monad (mzero)
-import Control.Monad.IO.Class
 
-import DynFlags
-import GhcMonad (withTempSession)
 import qualified GHC
-import           GHC (GenLocated(L), unLoc)
-import qualified GHC.Paths
-import qualified TypeRep
-import           TypeRep (Type(..))
-import qualified Unify
-import qualified OccName
-import qualified Var
-import qualified Type
-import Digraph (flattenSCCs) -- this should be expected from GHC
+import           GHC (GenLocated(L))
 import qualified Digraph
-import Outputable hiding ((<>))
 import VarEnv
 import VarSet
-import Bag
-import qualified HscTypes
 
-import Options.Applicative hiding ((<>))
 import Utils
 
 usageGraph :: [GHC.TypecheckedSource] -> Digraph.Graph (Digraph.Node GHC.Id ())

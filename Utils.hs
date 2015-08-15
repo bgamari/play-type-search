@@ -1,33 +1,15 @@
 module Utils where
 
-import Data.Monoid
-import Data.Maybe (fromMaybe)
 import Data.Generics
-import Data.Foldable
-import Data.List (isSuffixOf)
-import Control.Monad (mzero)
 import Control.Monad.IO.Class
 
 import DynFlags
-import GhcMonad (withTempSession)
 import qualified GHC
-import           GHC (GenLocated(L), unLoc)
-import qualified GHC.Paths
-import qualified TypeRep
+import           GHC (GenLocated(L))
 import           TypeRep (Type(..))
-import qualified Unify
-import qualified OccName
-import qualified Var
-import qualified Type
-import Digraph (flattenSCCs) -- this should be expected from GHC
-import qualified Digraph
 import Outputable hiding ((<>))
 import VarEnv
-import VarSet
 import Bag
-import qualified HscTypes
-
-import Options.Applicative hiding ((<>))
 
 printBindings :: [GHC.LHsBind GHC.Id] -> GHC.Ghc ()
 printBindings binds = do
